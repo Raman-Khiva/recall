@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
-use std::io;
+use std::io::{self, BufRead};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -224,6 +224,31 @@ async fn save(
 fn invalid_query() {
     println!("Plese put valid query");
     return;
+}
+
+// multiline read fucntion
+fn read_multiline() -> io::Result<String> {
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+
+    let mut content = String::new();
+    let mut line = String::new();
+    println!("Enter your content (:end to finish):");
+    loop {
+        line.clear();
+
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+
+        if line.trim_end_matches(['\r', '\n']) == ":end" {
+            break;
+        }
+
+        content.push_str(&line);
+    }
+
+    Ok(content)
 }
 
 #[tokio::main]
@@ -463,7 +488,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         if s.starts_with("save") {
             //handle save handle
-            let content = s.strip_prefix("save").unwrap_or(s).trim().to_string();
+            // let content = s.strip_prefix("save").unwrap_or(s).trim().to_string();
+            let content = read_multiline()?;
             save(&content, &client, &conn).await?;
         } else if s.starts_with("get") {
             // get handle get
