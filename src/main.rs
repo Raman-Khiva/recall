@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand};
 use groqai::{ChatMessage, GroqClient, MessageContent, ResponseFormat, Role};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,29 @@ struct SnippetMeta {
 #[allow(dead_code)]
 struct SnippetTitle {
     title: String,
+}
+
+#[derive(Parser)]
+#[command(
+    name = "rc",
+    version,
+    about = "a powerful lightweight quick captue and rapid retrieval engine"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Save {
+        #[arg(value_name = "CONTENT")]
+        content: Vec<String>,
+    },
+    Get {
+        #[arg(value_name = "QUERY")]
+        query: Vec<String>,
+    },
 }
 
 #[allow(dead_code)]
@@ -212,7 +236,8 @@ async fn save(
         ],
     )?;
 
-    println!("generated content {:?}", snippet_entry);
+    println!("\x1b[32m✓\x1b[0m Saved successfully!");
+    // println!("generated content {:?}", snippet_entry);
     // println!(
     //     "Generated  \n title: {}  \n summary: {}",
     //     content.title, content.summary
@@ -221,6 +246,7 @@ async fn save(
     //save end
 }
 
+#[allow(dead_code)]
 fn invalid_query() {
     println!("Plese put valid query");
     return;
@@ -257,8 +283,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // println!("Hello, world!");
     //
 
+    let cli = Cli::parse();
+
+    // let client = GroqClient::new()?;
     // create conn
     let conn = rusqlite::Connection::open("recall.db")?;
+
+    let client = GroqClient::new()?;
 
     //create table snippets
     // conn.execute(
@@ -269,6 +300,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //     );",
     //     (),
     // )?;
+
+    match cli.command {
+        Commands::Save { content } => {
+            let content = if content.is_empty() {
+                let input = read_multiline()?;
+                input
+            } else {
+                content.join(" ")
+            };
+
+            save(&content, &client, &conn).await?;
+        }
+
+        Commands::Get { query } => {
+            let query = if query.is_empty() {
+                println!("Enter your query here");
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                input
+            } else {
+                query.join(" ")
+            };
+
+            get(&query, &client, &conn).await?;
+        }
+    }
     let snippet_1 = r#"================================================================================
     UBUNTU CADDY REVERSE PROXY & AUTOMATIC HTTPS RUNBOOK
     ================================================================================
@@ -385,7 +442,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     "#
         .to_string();
 
-    let snippets: Vec<String> = vec![snippet_1, snippet_2, snippet_3, snippet_4, snippet_5];
+    let _snippets: Vec<String> = vec![snippet_1, snippet_2, snippet_3, snippet_4, snippet_5];
 
     //     // Direct index access (panics if index is out of bounds)
     //     println!("{}", snippets[0]);
@@ -465,10 +522,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // ================================================================================
     // "#.to_string();
 
-    let client = GroqClient::new()?;
-
-    println!("Agent is here...");
-
+    // println!("Agent is here...");
+    /*
     let mut flag = true;
 
     while flag {
@@ -506,5 +561,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Goode bye");
 
     // agent().await?;
+    */
     Ok(())
 }
