@@ -1,45 +1,484 @@
-use rusqlite::{Connection, Result};
+use groqai::{ChatMessage, GroqClient, MessageContent, ResponseFormat, Role};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::error::Error;
+use std::io;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Person {
     id: i32,
     name: String,
 }
 
-fn main() -> Result<()> {
-    println!("Hello, world!");
+#[derive(Debug)]
+#[allow(dead_code)]
+struct Snippet {
+    title: String,
+    summary: String,
+    content: String,
+}
 
-    let conn = Connection::open("recall.db")?;
+#[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+struct SnippetMeta {
+    title: String,
+    summary: String,
+}
 
-    // let mut s = String::new();
+#[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
+struct SnippetTitle {
+    title: String,
+}
 
-    conn.execute(
-        "CREATE TABLE person(
-       id INTEGER PRIMARY KEY,
-       name TEXT NOT NULL
-    );",
-        (),
+#[allow(dead_code)]
+async fn agent() -> Result<(), Box<dyn Error>> {
+    let client = GroqClient::new()?;
+
+    let messages = vec![ChatMessage::new_text(
+        Role::User,
+        "Explain rust language in simple language and as simple text not json string",
+    )];
+
+    let response = client
+        .chat("openai/gpt-oss-20b")
+        .messages(messages)
+        .send()
+        .await?;
+
+    if let Some(choice) = response.choices.first() {
+        println!("Response: {:?}", choice.message.content);
+    }
+
+    Ok(())
+}
+
+// get function
+async fn get(
+    // get params
+    query: &String,
+    client: &GroqClient,
+    conn: &Connection,
+) -> Result<(), Box<dyn Error>> {
+    let mut stmt = conn.prepare("SELECT title, summary FROM snippets;")?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(SnippetMeta {
+            title: row.get(0)?,
+            summary: row.get(1)?,
+        })
+    })?;
+
+    let meta_list: Vec<SnippetMeta> =
+        rows.collect::<Result<Vec<SnippetMeta>, rusqlite::Error>>()?;
+
+    // for meta in &meta_list {
+    //     println!("{:?}", meta);
+    // }
+
+    let context = serde_json::to_string_pretty(&meta_list);
+
+    let messages = vec![
+        ChatMessage::new_text(
+            Role::System,
+            "You are a brain of a quick snippet saving and finding program. you have given the user query and meta data of availbe snippets, your job is to select most appropirate snippet matching the user query and return it's title",
+        ),
+        ChatMessage::new_text(
+            Role::User,
+            format!(
+                "Snippets Meta: \n {:?} \n \n , find snippets relevent to : {}",
+                context, query
+            ),
+        ),
+    ];
+
+    // get response
+    let response = client
+        .chat("openai/gpt-oss-120b")
+        .messages(messages)
+        .response_format(ResponseFormat {
+            type_: "json_schema".to_string(),
+            json_schema: Some(json!({
+                "name" : "snippet_title",
+                "strcit" : true,
+                "schema" : {
+                    "type" : "object",
+                    "properties":{
+                        "title":{"type":"string"}
+                    },
+                    "required":["title"],
+                    "additionalProperties": false,
+                }
+            })),
+        })
+        .send()
+        .await?;
+
+    let content = &response.choices[0].message.content;
+    let raw_json = match content {
+        MessageContent::Text(s) => s.as_str(),
+        _ => return Err("Expected text from groq but not found".into()),
+    };
+
+    let snippet_title: SnippetTitle = serde_json::from_str(raw_json)?;
+
+    println!(
+        "target title given by groqai! title: {}",
+        snippet_title.title
+    );
+
+    let snippet: Snippet = conn.query_row(
+        "SELECT * FROM snippets Where title=$1",
+        [snippet_title.title],
+        |row| {
+            Ok(Snippet {
+                title: row.get(0)?,
+                summary: row.get(1)?,
+                content: row.get(2)?,
+            })
+        },
     )?;
 
-    let person = Person {
-        id: 23,
-        name: "raman".to_string(),
+    println!("content : {}", snippet.content);
+
+    Ok(())
+
+    //get end get function end
+}
+
+// save function
+async fn save(
+    // save params
+    snippet: &String,
+    client: &GroqClient,
+    conn: &Connection,
+) -> Result<(), Box<dyn Error>> {
+    // messages save
+    let messages = vec![
+        ChatMessage::new_text(
+            Role::System,
+            "You are a brain of a quick snippet saving and finding program. you have given the snippet user wants to save your job is to generate appropriate title and a short summary which will be used to semantically find the snippet later.",
+        ),
+        ChatMessage::new_text(Role::User, snippet.clone()),
+    ];
+
+    // response save
+    let response = client
+        .chat("openai/gpt-oss-20b")
+        .messages(messages)
+        .response_format(ResponseFormat {
+            type_: "json_schema".to_string(),
+            json_schema: Some(json!({
+                "name": "snippet_metadata",
+                "strict": true,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string" },
+                        "summary": { "type": "string" }
+                    },
+                    "required": ["title", "summary"],
+                    "additionalProperties": false
+                }
+            })),
+        })
+        .send()
+        .await?;
+
+    let content = &response.choices[0].message.content;
+
+    let raw_json = match content {
+        MessageContent::Text(s) => s.as_str(),
+        _ => return Err("Expected text response from Groq".into()),
+    };
+
+    let meta: SnippetMeta = serde_json::from_str(raw_json)?;
+
+    // save to database
+    let snippet_entry: Snippet = Snippet {
+        title: meta.title,
+        summary: meta.summary,
+        content: snippet.to_string(),
     };
 
     conn.execute(
-        "INSERT INTO person (id,name) VALUES ($1, $2)",
-        (&person.id, &person.name),
+        "INSERT INTO snippets (title, summary, content) VALUES (?1, ?2, ?3)",
+        rusqlite::params![
+            snippet_entry.title,
+            snippet_entry.summary,
+            snippet_entry.content,
+        ],
     )?;
 
-    // match io::stdin().read_line(&mut s) {
-    //     Ok(_) => (),
-    // };
+    println!("generated content {:?}", snippet_entry);
+    // println!(
+    //     "Generated  \n title: {}  \n summary: {}",
+    //     content.title, content.summary
+    // );
+    Ok(())
+    //save end
+}
 
-    // let list = s.trim().split(" ");
+fn invalid_query() {
+    println!("Plese put valid query");
+    return;
+}
 
-    // for item in list {
-    //     println!("{}", item);
+#[tokio::main]
+#[allow(dead_code)]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // println!("Hello, world!");
+    //
+
+    // create conn
+    let conn = rusqlite::Connection::open("recall.db")?;
+
+    //create table snippets
+    // conn.execute(
+    //     "CREATE TABLE snippets (
+    //     title TEXT NOT NULL UNIQUE,
+    //     summary TEXT NOT NULL,
+    //     content TEXT NOT NULL
+    //     );",
+    //     (),
+    // )?;
+    let snippet_1 = r#"================================================================================
+    UBUNTU CADDY REVERSE PROXY & AUTOMATIC HTTPS RUNBOOK
+    ================================================================================
+
+    1. INSTALL CADDY ON UBUNTU
+    --------------------------------------------------------------------------------
+      sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+      sudo apt update && sudo apt install -y caddy
+
+    2. SAMPLE /etc/caddy/Caddyfile FOR LOCAL CONTAINER / APP PORT
+    --------------------------------------------------------------------------------
+      api.example.com {
+          reverse_proxy 127.0.0.1:8080
+      }
+
+    3. VALIDATE, RELOAD & CHECK LOGS
+    --------------------------------------------------------------------------------
+      caddy validate --config /etc/caddy/Caddyfile
+      sudo systemctl reload caddy
+      journalctl -u caddy -f --no-pager
+    ================================================================================
+    "#
+        .to_string();
+
+    let snippet_2 =
+        r#"================================================================================
+    DOCKER & COMPOSE CLEANUP / DEBUGGING CHEAT SHEET
+    ================================================================================
+
+    1. INSPECT RUNNING CONTAINERS & LIVE LOGS
+    --------------------------------------------------------------------------------
+      docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+      docker logs -f --tail 100 <container_name>
+
+    2. SHELL INTO A CONTAINER
+    --------------------------------------------------------------------------------
+      docker exec -it <container_name> sh
+
+    3. RECLAIM DISK SPACE SAFELY
+    --------------------------------------------------------------------------------
+      docker system df
+      docker image prune -f
+      docker builder prune -f
+      # Warning: removes unused volumes too:
+      docker volume prune -f
+    ================================================================================
+    "#
+        .to_string();
+
+    let snippet_3 =
+        r#"================================================================================
+    POSTGRESQL & REDIS QUICK CONNECTION / INSPECTION COMMANDS
+    ================================================================================
+
+    1. POSTGRESQL VIA PSQL
+    --------------------------------------------------------------------------------
+      psql "$DATABASE_URL"
+      \dt
+      \d+ users
+      SELECT pid, state, query_start, left(query, 80) FROM pg_stat_activity WHERE state != 'idle';
+
+    2. REDIS VIA REDIS-CLI
+    --------------------------------------------------------------------------------
+      redis-cli -u "$REDIS_URL" ping
+      redis-cli -u "$REDIS_URL" --scan --pattern "cache:*" | head -n 30
+      redis-cli -u "$REDIS_URL" info memory | grep -E "used_memory_human|maxmemory_human"
+    ================================================================================
+    "#
+        .to_string();
+
+    let snippet_4 =
+        r#"================================================================================
+    SYSTEMD SERVICE & PORT / SOCKET TROUBLESHOOTING
+    ================================================================================
+
+    1. CHECK SERVICE STATUS & RECENT ERRORS
+    --------------------------------------------------------------------------------
+      systemctl status <service_name> --no-pager
+      journalctl -u <service_name> -n 80 --no-pager
+
+    2. FIND WHICH PROCESS OWNS A PORT
+    --------------------------------------------------------------------------------
+      ss -tulpn | grep :3000
+      lsof -i :3000
+
+    3. RESTART AFTER UNIT / ENV EDIT
+    --------------------------------------------------------------------------------
+      sudo systemctl daemon-reload
+      sudo systemctl restart <service_name>
+    ================================================================================
+    "#
+        .to_string();
+
+    let snippet_5 =
+        r#"================================================================================
+    SSH KEY SETUP & REMOTE LINUX FILE SYNC (RSYNC)
+    ================================================================================
+
+    1. GENERATE ED25519 KEY & COPY TO REMOTE HOST
+    --------------------------------------------------------------------------------
+      ssh-keygen -t ed25519 -C "dev-machine"
+      ssh-copy-id user@remote-host
+
+    2. SYNC PROJECT ARTIFACTS EXCLUDING BUILD/CACHE DIRS
+    --------------------------------------------------------------------------------
+      rsync -avz --progress \
+        --exclude 'target/' \
+        --exclude 'node_modules/' \
+        --exclude '.git/' \
+        ./ user@remote-host:~/app/
+    ================================================================================
+    "#
+        .to_string();
+
+    let snippets: Vec<String> = vec![snippet_1, snippet_2, snippet_3, snippet_4, snippet_5];
+
+    //     // Direct index access (panics if index is out of bounds)
+    //     println!("{}", snippets[0]);
+
+    //     // Safe index access (returns Option<&String>)
+    //     if let Some(item) = snippets.get(3) {
+    //         println!("{item}");
+    //     }
     // }
+    // let snippet  = r#"================================================================================
+    // RUST SETUP GUIDE FOR UBUNTU (WITH CLI / TUI / CLIPBOARD DEPENDENCIES)
+    // ================================================================================
 
+    // 1. UPDATE PACKAGES & INSTALL BUILD TOOLS
+    // --------------------------------------------------------------------------------
+    // Rust needs a C linker (gcc/build-essential) and a few native libraries so crates
+    // like reqwest (HTTPS), rusqlite (SQLite), and arboard (clipboard) compile cleanly.
+
+    // Run:
+    //   sudo apt update && sudo apt upgrade -y
+    //   sudo apt install -y curl build-essential pkg-config libssl-dev libsqlite3-dev xclip wl-clipboard
+
+    // Note:
+    // - xclip is used for X11 clipboard support.
+    // - wl-clipboard provides wl-copy/wl-paste for Wayland sessions.
+
+    // 2. INSTALL RUST USING RUSTUP (OFFICIAL TOOLCHAIN INSTALLER)
+    // --------------------------------------------------------------------------------
+    // Run the official rustup installer:
+    //   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+    // When prompted:
+    //   Press 1 (Proceed with standard installation) and hit Enter.
+
+    // 3. LOAD RUST INTO YOUR CURRENT SHELL
+    // --------------------------------------------------------------------------------
+    // Either restart your terminal, or run:
+    //   source "$HOME/.cargo/env"
+
+    // 4. VERIFY INSTALLATION
+    // --------------------------------------------------------------------------------
+    // Run:
+    //   rustc --version
+    //   cargo --version
+
+    // You should see version numbers printed for both rustc (compiler) and cargo
+    // (package manager & build tool).
+
+    // 5. CREATE & TEST YOUR PROJECT ("agent")
+    // --------------------------------------------------------------------------------
+    // Run:
+    //   cargo new agent
+    //   cd agent
+    //   cargo run
+
+    // If it prints "Hello, world!", your Rust environment is ready.
+
+    // 6. USEFUL CARGO COMMANDS FOR TONIGHT
+    // --------------------------------------------------------------------------------
+    //   cargo check             # Fast syntax & type check without building a binary
+    //   cargo build             # Build debug binary (target/debug/agent)
+    //   cargo build --release   # Build fast optimized binary (target/release/agent)
+    //   cargo add <crate>       # Add a dependency to Cargo.toml
+
+    // To make your compiled binary runnable anywhere as `agent`:
+    //   sudo cp target/release/agent /usr/local/bin/agent
+    //   # OR symlink without sudo if ~/.local/bin is in your PATH:
+    //   mkdir -p ~/.local/bin && ln -sf "$(pwd)/target/release/agent" ~/.local/bin/agent
+
+    // 7. UPDATING OR UNINSTALLING RUST LATER
+    // --------------------------------------------------------------------------------
+    // Update Rust:
+    //   rustup update
+
+    // Uninstall Rust completely:
+    //   rustup self uninstall
+    // ================================================================================
+    // "#.to_string();
+
+    let client = GroqClient::new()?;
+
+    println!("Agent is here...");
+
+    let mut flag = true;
+
+    while flag {
+        let mut s = String::new();
+
+        //read input
+        match io::stdin().read_line(&mut s) {
+            Ok(_) => (),
+            Err(e) => return Err(e.into()),
+        };
+
+        let s = s.trim();
+        if s.is_empty() {
+            invalid_query();
+            continue;
+        }
+
+        if s.starts_with("save") {
+            //handle save handle
+            let content = s.strip_prefix("save").unwrap_or(s).trim().to_string();
+            save(&content, &client, &conn).await?;
+        } else if s.starts_with("get") {
+            // get handle get
+            // println!("getting..");
+            let query = s.strip_prefix("get").unwrap_or(s).trim().to_string();
+            get(&query, &client, &conn).await?;
+        } else if s.starts_with("end") {
+            flag = false;
+        } else {
+            invalid_query();
+        }
+    }
+
+    println!("Goode bye");
+
+    // agent().await?;
     Ok(())
 }
