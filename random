@@ -1,0 +1,14 @@
+Docker provides multiple networking drivers, including bridge, host, none, and overlay.
+
+The bridge network is the default networking mode for standalone containers. Containers attached to the same user-defined bridge network can communicate with each other using container names as DNS hostnames.
+
+For example, an API container can connect to a PostgreSQL container using the hostname "postgres" if both containers belong to the same user-defined network.
+
+Port publishing is different from container-to-container communication. The command "-p 8080:3000" maps port 8080 on the host to port 3000 inside the container. It does not change the port on which the application listens internally.
+
+Host networking removes network isolation between the container and the host. In this mode, the container shares the host network namespace, and port publishing is unnecessary.
+
+Overlay networks are primarily used to enable communication between containers running on different Docker hosts, such as in a Docker Swarm environment.
+
+A common troubleshooting mistake is assuming that exposing a port automatically makes a container accessible to every other container. Containers on separate isolated bridge networks cannot communicate directly just because their ports are published.
+

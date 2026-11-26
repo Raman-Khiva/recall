@@ -1,3 +1,4 @@
+use bat::{Input, PrettyPrinter, WrappingMode};
 use clap::{Parser, Subcommand};
 use groqai::{ChatMessage, GroqClient, MessageContent, ResponseFormat, Role};
 use rusqlite::Connection;
@@ -5,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
 use std::io::{self, BufRead};
+use terminal_size::{Width, terminal_size};
+use textwrap::Options;
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -148,10 +151,10 @@ async fn get(
 
     let snippet_title: SnippetTitle = serde_json::from_str(raw_json)?;
 
-    println!(
-        "target title given by groqai! title: {}",
-        snippet_title.title
-    );
+    // println!(
+    //     "target title given by groqai! title: {}",
+    //     snippet_title.title
+    // );
 
     let snippet: Snippet = conn.query_row(
         "SELECT * FROM snippets Where title=$1",
@@ -165,11 +168,89 @@ async fn get(
         },
     )?;
 
-    println!("content : {}", snippet.content);
+    display_content(&snippet.content)?;
+    // println!("{}", snippet.content);
 
     Ok(())
 
     //get end get function end
+}
+
+// display content function
+fn display_content(content: &str) -> Result<(), Box<dyn Error>> {
+    let terminal_width = terminal_size()
+        .map(|(Width(w), _)| w as usize)
+        .unwrap_or(80);
+
+    let padding = 4;
+    let content_width = terminal_width.saturating_sub(padding * 4);
+
+    // let options = Options::new(content_width).break_words(false);
+
+    // let line = "─".repeat(content_width);
+
+    // println!();
+    // println!("{}\x1b[32m{}\x1b[0m", " ".repeat(padding), line);
+    // println!();
+
+    let gutter = 4;
+    let wrapped = textwrap::fill(
+        content,
+        Options::new(content_width.saturating_sub(gutter)).break_words(false),
+    );
+
+    PrettyPrinter::new()
+        .input(Input::from_bytes(wrapped.as_bytes()))
+        .language("markdown")
+        .grid(true)
+        .line_numbers(true)
+        .term_width(terminal_width)
+        .wrapping_mode(WrappingMode::Character)
+        .print()?;
+    // PrettyPrinter::new()
+    //        .input(Input::from_bytes(content.as_bytes()))
+    //        .language("markdown")
+    //        .grid(true)
+    //        .line_numbers(true)
+    //        .term_width(terminal_width)
+    //        .wrapping_mode(WrappingMode::Character)
+    //        .print();
+
+    // for paragraph in content.split("\n\n") {
+    //     if paragraph.trim().is_empty() {
+    //         println!();
+    //         continue;
+    //     }
+
+    //     for line in wrap(paragraph.trim(), &options) {
+    //         // println!("{}{}", " ".repeat(padding * 2), line);
+    //         PrettyPrinter::new()
+    //             .input(Input::from_bytes(line.as_bytes()))
+    //             .language("markdown")
+    //             .grid(true)
+    //             .line_numbers(true)
+    //             .term_width(terminal_width)
+    //             .wrapping_mode(WrappingMode::Character)
+    //             .print();
+    //         // PrettyPrinter::new()
+    //         //     .input(Input::from_bytes(line.as_bytes()).title(title))
+    //         //     .language(lang)
+    //         //     .header(true)
+    //         //     .grid(true)
+    //         //     .line_numbers(false)
+    //         //     .term_width(term_width.min(100))
+    //         //     .wrapping_mode(WrappingMode::Character)
+    //         //     .print();
+    //     }
+
+    //     println!();
+    // }
+
+    // println!();
+    // println!("{}\x1b[32m{}\x1b[0m", " ".repeat(padding), line);
+    // println!();
+    //
+    Ok(())
 }
 
 // save function
@@ -277,6 +358,20 @@ fn read_multiline() -> io::Result<String> {
     Ok(content)
 }
 
+fn db_init() -> Result<Connection, Box<dyn Error>> {
+    let data_dir = dirs::data_local_dir()
+        .expect("Could not determine local data directory! (hint: ~/.local/share)")
+        .join("recall");
+
+    std::fs::create_dir_all(&data_dir)?;
+
+    let db_path = data_dir.join("recall.db");
+
+    let conn = rusqlite::Connection::open(db_path)?;
+
+    Ok(conn)
+}
+
 #[tokio::main]
 #[allow(dead_code)]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -287,7 +382,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // let client = GroqClient::new()?;
     // create conn
-    let conn = rusqlite::Connection::open("recall.db")?;
+    let conn = db_init()?;
 
     let client = GroqClient::new()?;
 
