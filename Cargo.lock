@@ -1527,6 +1527,7 @@ dependencies = [
 name = "recall"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bat",
  "clap",
  "dirs",

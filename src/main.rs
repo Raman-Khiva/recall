@@ -11,6 +11,8 @@ use std::io::{self, BufRead};
 use terminal_size::{Width, terminal_size};
 use textwrap::Options;
 
+use crate::agent::{Message, SnippetTitle, agent};
+
 #[derive(Debug)]
 #[allow(dead_code)]
 struct Person {
@@ -33,11 +35,11 @@ struct SnippetMeta {
     summary: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
-struct SnippetTitle {
-    title: String,
-}
+// #[derive(Debug, serde::Deserialize)]
+// #[allow(dead_code)]
+// struct SnippetTitle {
+//     title: String,
+// }
 
 #[derive(Parser)]
 #[command(
@@ -62,27 +64,27 @@ enum Commands {
     },
 }
 
-#[allow(dead_code)]
-async fn agent() -> Result<(), Box<dyn Error>> {
-    let client = GroqClient::new()?;
+// #[allow(dead_code)]
+// async fn agent() -> Result<(), Box<dyn Error>> {
+//     let client = GroqClient::new()?;
 
-    let messages = vec![ChatMessage::new_text(
-        Role::User,
-        "Explain rust language in simple language and as simple text not json string",
-    )];
+//     let messages = vec![ChatMessage::new_text(
+//         Role::User,
+//         "Explain rust language in simple language and as simple text not json string",
+//     )];
 
-    let response = client
-        .chat("openai/gpt-oss-20b")
-        .messages(messages)
-        .send()
-        .await?;
+//     let response = client
+//         .chat("openai/gpt-oss-20b")
+//         .messages(messages)
+//         .send()
+//         .await?;
 
-    if let Some(choice) = response.choices.first() {
-        println!("Response: {:?}", choice.message.content);
-    }
+//     if let Some(choice) = response.choices.first() {
+//         println!("Response: {:?}", choice.message.content);
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 // get function
 async fn get(
@@ -109,49 +111,67 @@ async fn get(
 
     let context = serde_json::to_string_pretty(&meta_list);
 
-    let messages = vec![
-        ChatMessage::new_text(
-            Role::System,
-            "You are a brain of a quick snippet saving and finding program. you have given the user query and meta data of availbe snippets, your job is to select most appropirate snippet matching the user query and return it's title",
-        ),
-        ChatMessage::new_text(
-            Role::User,
-            format!(
-                "Snippets Meta: \n {:?} \n \n , find snippets relevent to : {}",
-                context, query
-            ),
-        ),
+    let messages: Vec<Message> = vec![
+        Message{role : "system".to_string(), content : "You are a brain of a quick snippet saving and finding program. you have given the user query and meta data of availbe snippets, your job is to select most appropirate snippet matching the user query and return it's title".to_string(),
+    },
+    Message{
+        role:"user".to_string(),
+        content: format!(
+                        "Snippets Meta: \n {:?} \n \n , find snippets relevent to : {}",
+                        context, query
+                    ),
+    }
     ];
+    // let messages = vec![
+    //     ChatMessage::new_text(
+    //         Role::System,
+    //         "You are a brain of a quick snippet saving and finding program. you have given the user query and meta data of availbe snippets, your job is to select most appropirate snippet matching the user query and return it's title",
+    //     ),
+    //     ChatMessage::new_text(
+    //         Role::User,
+    //         format!(
+    //             "Snippets Meta: \n {:?} \n \n , find snippets relevent to : {}",
+    //             context, query
+    //         ),
+    //     ),
+    // ];
 
     // get response
-    let response = client
-        .chat("openai/gpt-oss-120b")
-        .messages(messages)
-        .response_format(ResponseFormat {
-            type_: "json_schema".to_string(),
-            json_schema: Some(json!({
-                "name" : "snippet_title",
-                "strcit" : true,
-                "schema" : {
-                    "type" : "object",
-                    "properties":{
-                        "title":{"type":"string"}
-                    },
-                    "required":["title"],
-                    "additionalProperties": false,
-                }
-            })),
-        })
-        .send()
-        .await?;
+    // let response = client
+    //     .chat("openai/gpt-oss-120b")
+    //     .messages(messages)
+    //     .response_format(ResponseFormat {
+    //         type_: "json_schema".to_string(),
+    //         json_schema: Some(json!({
+    //             "name" : "snippet_title",
+    //             "strcit" : true,
+    //             "schema" : {
+    //                 "type" : "object",
+    //                 "properties":{
+    //                     "title":{"type":"string"}
+    //                 },
+    //                 "required":["title"],
+    //                 "additionalProperties": false,
+    //             }
+    //         })),
+    //     })
+    //     .send()
+    //     .await?;
+    //
+    let required_props: Vec<String> = vec!["title".to_string()];
 
-    let content = &response.choices[0].message.content;
-    let raw_json = match content {
-        MessageContent::Text(s) => s.as_str(),
-        _ => return Err("Expected text from groq but not found".into()),
-    };
+    let response_schema: serde_json::Value = json!({
+        "title":{"type":"string"}
+    });
 
-    let snippet_title: SnippetTitle = serde_json::from_str(raw_json)?;
+    let content: String = agent(&messages, response_schema, &required_props).await?;
+    // &response.choices[0].message.content;
+    // let raw_json = match content {
+    //     MessageContent::Text(s) => s.as_str(),
+    //     _ => return Err("Expected text from groq but not found".into()),
+    // };
+
+    let snippet_title: SnippetTitle = serde_json::from_str(&content.to_string())?;
 
     // println!(
     //     "target title given by groqai! title: {}",
