@@ -1,4 +1,6 @@
+mod agent;
 use bat::{Input, PrettyPrinter, WrappingMode};
+
 use clap::{Parser, Subcommand};
 use groqai::{ChatMessage, GroqClient, MessageContent, ResponseFormat, Role};
 use rusqlite::Connection;
