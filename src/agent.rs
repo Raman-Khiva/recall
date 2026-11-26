@@ -1,10 +1,10 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::error::Error;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize)]
 #[allow(dead_code)]
+#[derive(Serialize)]
 pub struct Message {
     pub role: String,
     pub content: String,
@@ -39,11 +39,10 @@ pub async fn agent(
     let client = reqwest::Client::new();
 
     let api_key = std::env::var("GROQ_API_KEY")?;
-    println!("{}", api_key);
     let response: serde_json::Value = client
         .post("https://api.groq.com/openai/v1/chat/completions")
         .bearer_auth(api_key)
-        .json(&serde_json::json!({
+        .json(&json!({
             "model":"openai/gpt-oss-120b",
             "messages" : &messages,
             "response_format" : {
