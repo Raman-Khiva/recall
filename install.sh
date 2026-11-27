@@ -140,4 +140,30 @@ if [[ -n "$RESTART_HINT" ]]; then
     echo "  ${RESTART_HINT}"
     echo ""
 fi
+
+# --- API key setup -----------------------------------------------------------
+if [[ -z "${GROQ_API_KEY:-}" ]]; then
+    echo "Recall needs a Groq API key. Get one at https://console.groq.com/keys"
+    echo "Then add it to your shell config:"
+    echo ""
+    case "$(basename "${SHELL:-}")" in
+        fish)
+            echo "  set -Ux GROQ_API_KEY your_key_here"
+            ;;
+        zsh)
+            echo "  echo 'export GROQ_API_KEY=\"your_key_here\"' >> \"${ZDOTDIR:-\$HOME}/.zshrc\""
+            ;;
+        bash)
+            echo "  echo 'export GROQ_API_KEY=\"your_key_here\"' >> ~/.bashrc"
+            ;;
+        *)
+            echo "  export GROQ_API_KEY=\"your_key_here\""
+            ;;
+    esac
+    echo ""
+else
+    echo "GROQ_API_KEY detected in your environment."
+    echo ""
+fi
+
 echo "Then run: rc --version"
