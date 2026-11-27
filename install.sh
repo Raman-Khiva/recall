@@ -1,4 +1,5 @@
 
+
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -6,7 +7,7 @@ REPO="Raman-Khiva/recall"
 VERSION="v0.1.0"
 ARCHIVE="rc-v0.1.0-linux-x86_64.tar.gz"
 CHECKSUM="${ARCHIVE}.sha256"
-INSTALL_DIR="${HOME}/.local/bin"
+INSTALL_DIR="/usr/local/bin"
 
 echo "Installing Recall ${VERSION}..."
 
@@ -25,7 +26,7 @@ if [[ "$ARCH" != "x86_64" ]]; then
 fi
 
 # Check required tools
-for cmd in curl tar sha256sum; do
+for cmd in curl tar sha256sum install; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "Error: Required command not found: $cmd"
         exit 1
@@ -48,8 +49,7 @@ echo "Verifying checksum..."
 )
 
 echo "Extracting binary..."
-tar -xzf "${TMP_DIR}/${ARCHIVE}" \
-    -C "$TMP_DIR"
+tar -xzf "${TMP_DIR}/${ARCHIVE}" -C "$TMP_DIR"
 
 BINARY="${TMP_DIR}/recall-v0.1.0-linux-x86_64/rc"
 
@@ -58,19 +58,16 @@ if [[ ! -f "$BINARY" ]]; then
     exit 1
 fi
 
-mkdir -p "$INSTALL_DIR"
-install -m 755 "$BINARY" "${INSTALL_DIR}/rc"
+# Install into /usr/local/bin
+if [[ -w "$INSTALL_DIR" ]]; then
+    install -m 755 "$BINARY" "${INSTALL_DIR}/rc"
+else
+    echo "Administrator permission required to install into ${INSTALL_DIR}."
+    sudo install -D -m 755 "$BINARY" "${INSTALL_DIR}/rc"
+fi
 
 echo ""
 echo "Recall installed successfully!"
 echo "Location: ${INSTALL_DIR}/rc"
-
-if [[ ":${PATH}:" != *":${INSTALL_DIR}:"* ]]; then
-    echo ""
-    echo "Add Recall to your PATH:"
-    echo '  echo '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> ~/.bashrc'
-    echo "  source ~/.bashrc"
-fi
-
 echo ""
 echo "Run: rc --version"
