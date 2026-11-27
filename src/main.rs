@@ -39,10 +39,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(short_flag = 's')]
     Save {
         #[arg(value_name = "CONTENT")]
         content: Vec<String>,
     },
+    #[command(short_flag = 'g')]
     Get {
         #[arg(value_name = "QUERY")]
         query: Vec<String>,
