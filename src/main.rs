@@ -216,6 +216,23 @@ fn read_multiline() -> io::Result<String> {
     Ok(content)
 }
 
+// create table in db
+fn create_table(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "
+          CREATE TABLE IF NOT EXISTS snippets(
+                title TEXT NOT NULL UNIQUE,
+                summary TEXT NOT NULL,
+                content TEXT NOT NULL
+          );
+        ",
+        [],
+    )?;
+
+    Ok(())
+}
+
+// initialize db
 fn db_init() -> Result<Connection, Box<dyn Error>> {
     let data_dir = dirs::data_local_dir()
         .expect("Could not determine local data directory! (hint: ~/.local/share)")
@@ -227,16 +244,17 @@ fn db_init() -> Result<Connection, Box<dyn Error>> {
 
     let conn = rusqlite::Connection::open(db_path)?;
 
+    create_table(&conn)?;
     Ok(conn)
 }
 
 #[tokio::main]
 #[allow(dead_code)]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // intialize db
+    // initialize db
     let conn = db_init()?;
 
-    // inititalize cli
+    // initialize cli
     let cli = Cli::parse();
 
     match cli.command {
